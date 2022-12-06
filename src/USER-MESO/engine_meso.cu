@@ -227,7 +227,11 @@ void MesoDevice::free( void *ptr )
 {
     MemIter p = mem_table.find( ptr ) ;
     if( p == mem_table.end() ) return;
-    if( p->second.memoryType == cudaMemoryTypeDevice ) {
+#if CUDART_VERSION >= 10000
+    if ( p->second.type == cudaMemoryTypeDevice ) {
+#else        
+    if(  p->second.memoryType == cudaMemoryTypeDevice ) {
+#endif     
         cudaFree( ptr );
 #ifdef LMP_MESO_LOG_MEM
         fprintf( stderr, "<MESO> GPU[%d] - : %s\n", p->second.device, size2text( p->second.size ).c_str() );
@@ -285,8 +289,12 @@ std::string MesoDevice::size2text( std::size_t size )
 std::size_t MesoDevice::device_allocated() {
     size_t total = 0;
     for( typename std::map<void *, DevicePointerAttr>::iterator i = mem_table.begin(); i != mem_table.end(); i++ ) {
+#if CUDART_VERSION >= 10000
+        if ( i->second.type == cudaMemoryTypeDevice ) total += i->second.size;
+#else
         if ( i->second.memoryType == cudaMemoryTypeDevice ) total += i->second.size;
-    }
+#endif
+}
     return total;
 }
 
@@ -294,7 +302,11 @@ std::size_t MesoDevice::device_allocated() {
 std::size_t MesoDevice::host_allocated() {
     size_t total = 0;
     for( typename std::map<void *, DevicePointerAttr>::iterator i = mem_table.begin(); i != mem_table.end(); i++ ) {
+#if CUDART_VERSION >= 10000    
+        if ( i->second.type == cudaMemoryTypeHost ) total += i->second.size;
+#else
         if ( i->second.memoryType == cudaMemoryTypeHost ) total += i->second.size;
+#endif	
     }
     return total;
 }
