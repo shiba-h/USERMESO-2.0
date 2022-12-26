@@ -23,12 +23,17 @@
 #define _2_TO_MINUS_31  4.6566128730773925781E-10
 #define _2_TO_MINUS_32  2.3283064365386962891E-10
 
-#if(__CUDA_ARCH__<=900)
+#if(__CUDA_ARCH__<=800)
 #define WARPSZ      32U
 #define WARPALIGN (~31U)
 #else
 #error UNKNOWN ARCHITECTURE FOR DETERMINING WARP SIZE
 #endif
+
+#ifndef CUDART_VERSION
+#error CUDART_VERSION Undefined!
+#endif
+
 
 inline int ceiling( int x, int inc )
 {
@@ -169,42 +174,30 @@ __inline__ __host__ __device__ T bound( T x, T lower, T upper )
 {
     return max( lower, min( x, upper ) );
 }
-__inline__ __host__ __device__ uint bit_space3( uint x )
+
+__inline__ __host__ __device__ unsigned long long bit_space3( uint x )
 {
+#if 0
     x = ( x | ( x << 12 ) ) & 0X00FC003FU;
     x = ( x | ( x <<  6 ) ) & 0X381C0E07U;
     x = ( x | ( x <<  4 ) ) & 0X190C8643U;
     x = ( x | ( x <<  2 ) ) & 0X49249249U;
-    return x;
+#endif
+    unsigned long long r = 0;
+    for(int i = 0, j = 0; i < 21; ++i, j += 3 ) {
+	    r |= ( ( x >> i ) & 0x1ULL ) << j;
+    }
+    return r;
 }
 
-__inline__ __host__ __device__ uint interleave3( uint i, uint j, uint k )
+__inline__ __host__ __device__ unsigned long long interleave3( uint i, uint j, uint k )
 {
     return bit_space3( i ) | ( bit_space3( j ) << 1 ) | ( bit_space3( k ) << 2 ) ;
 }
 
-__inline__ __device__ __host__ uint morton_encode( uint x, uint y, uint z )
+__inline__ __device__ __host__ unsigned long long morton_encode( uint x, uint y, uint z )
 {
     return interleave3( x, y, z );
-}
-
-__inline__ __device__ __host__ void morton_decode( uint code, uint &x, uint &y, uint &z )
-{
-    x = code & 0x09249249;            // x = ---- 9--8 --7- -6-- 5--4 --3- -2-- 1--0
-    x = ( x ^ ( x >>  2 ) ) & 0x030c30c3; // x = ---- --98 ---- 76-- --54 ---- 32-- --10
-    x = ( x ^ ( x >>  4 ) ) & 0x0300f00f; // x = ---- --98 ---- ---- 7654 ---- ---- 3210
-    x = ( x ^ ( x >>  8 ) ) & 0xff0000ff; // x = ---- --98 ---- ---- ---- ---- 7654 3210
-    x = ( x ^ ( x >> 16 ) ) & 0x000003ff; // x = ---- ---- ---- ---- ---- --98 7654 3210
-    y = ( code >> 1 ) & 0x09249249;
-    y = ( y ^ ( y >>  2 ) ) & 0x030c30c3;
-    y = ( y ^ ( y >>  4 ) ) & 0x0300f00f;
-    y = ( y ^ ( y >>  8 ) ) & 0xff0000ff;
-    y = ( y ^ ( y >> 16 ) ) & 0x000003ff;
-    z = ( code >> 2 ) & 0x09249249;
-    z = ( z ^ ( z >>  2 ) ) & 0x030c30c3;
-    z = ( z ^ ( z >>  4 ) ) & 0x0300f00f;
-    z = ( z ^ ( z >>  8 ) ) & 0xff0000ff;
-    z = ( z ^ ( z >> 16 ) ) & 0x000003ff;
 }
 
 __inline__ __device__ double __2_to_n( int n )
@@ -520,11 +513,13 @@ template<int N> __inline__ __host__ __device__ float uniform_TEA_fast( uint v0, 
 //  return _SQRT_3 * ( (m >> 32) * 4.656612873077392578125e-10 - 1.0 );
 //}
 
+/*
 __inline__ __device__ double fetch_double( texture<int2, cudaTextureType1D> tex, int i )
 {
     int2 v = tex1Dfetch( tex, i );
     return __hiloint2double( v.y, v.x );
 }
+*/
 
 template<>
 __inline__ __device__ double tex1Dfetch<double>( cudaTextureObject_t tex, int i )
@@ -629,17 +624,19 @@ __inline__ __device__ void atomicMin( double* address, double val )
 
 __device__ __inline__ int __shfl_xor_( int var, int laneMask, int width = warpSize )
 {
-#if __CUDA_ARCH__ >= 700
-    return __shfl_xor_sync( 0xffffffff, var, laneMask, width );
-#else
+#if CUDART_VERSION >= 9000
+    unsigned int mask = 0xffffffff;
+    return __shfl_xor_sync( mask, var, laneMask, width );
+#else 
     return __shfl_xor( var, laneMask, width );
 #endif
 }
 __device__ __inline__ float __shfl_xor_( float var, int laneMask, int width = warpSize )
 {
-#if __CUDA_ARCH__ >= 700
-    return __shfl_xor_sync( 0xffffffff, var, laneMask, width );
-#else
+#if CUDART_VERSION >= 9000
+    unsigned int mask = 0xffffffff;
+    return __shfl_xor_sync( mask, var, laneMask, width );
+#else 
     return __shfl_xor( var, laneMask, width );
 #endif
 }
@@ -648,13 +645,14 @@ __inline__ __device__ double __shfl_xor_( double var, int laneMask, int width = 
 {
     int hi, lo;
     asm volatile( "mov.b64 { %0, %1 }, %2;" : "=r"( lo ), "=r"( hi ) : "d"( var ) );
-#if __CUDA_ARCH__ >= 700
-    hi = __shfl_xor_sync( 0xffffffff, hi, laneMask, width );
-    lo = __shfl_xor_sync( 0xffffffff, lo, laneMask, width );
+#if CUDART_VERSION >= 9000
+    unsigned int mask = 0xffffffff;
+    hi = __shfl_xor_sync( mask, hi, laneMask, width );
+    lo = __shfl_xor_sync( mask, lo, laneMask, width );
 #else
     hi = __shfl_xor( hi, laneMask, width );
     lo = __shfl_xor( lo, laneMask, width );
-#endif 
+#endif
     return __hiloint2double( hi, lo );
 }
 
@@ -745,15 +743,15 @@ __inline__ __device__ int __warp_prefix_incl( int value )
         "{\n\t"
         ".reg .pred p;\n\t"
         ".reg .s32  t;\n\t"
-        "   shfl.up.b32 t|p, %0, 0x1, 0x0;\n\t"
+        "   shfl.sync.up.b32 t|p, %0, 0x1, 0x0, 0xFFFFFFFF;\n\t"
         "@p add.s32 %0, t, %0;\n\t"
-        "   shfl.up.b32 t|p, %0, 0x2, 0x0;\n\t"
+        "   shfl.sync.up.b32 t|p, %0, 0x2, 0x0, 0xFFFFFFFF;\n\t"
         "@p add.s32 %0, t, %0;\n\t"
-        "   shfl.up.b32 t|p, %0, 0x4, 0x0;\n\t"
+        "   shfl.sync.up.b32 t|p, %0, 0x4, 0x0, 0xFFFFFFFF;\n\t"
         "@p add.s32 %0, t, %0;\n\t"
-        "   shfl.up.b32 t|p, %0, 0x8, 0x0;\n\t"
+        "   shfl.sync.up.b32 t|p, %0, 0x8, 0x0, 0xFFFFFFFF;\n\t"
         "@p add.s32 %0, t, %0;\n\t"
-        "   shfl.up.b32 t|p, %0, 0x10, 0x0;\n\t"
+        "   shfl.sync.up.b32 t|p, %0, 0x10, 0x0, 0xFFFFFFFF;\n\t"
         "@p add.s32 %0, t, %0;\n\t"
         "}"
         : "+r"( value ) );
@@ -766,15 +764,15 @@ __inline__ __device__ uint __warp_prefix_incl( uint value )
         "{\n\t"
         ".reg .pred p;\n\t"
         ".reg .u32  t;\n\t"
-        "   shfl.up.b32 t|p, %0, 0x1, 0x0;\n\t"
+        "   shfl.sync.up.b32 t|p, %0, 0x1, 0x0, 0xFFFFFFFF;\n\t"
         "@p add.u32 %0, t, %0;\n\t"
-        "   shfl.up.b32 t|p, %0, 0x2, 0x0;\n\t"
+        "   shfl.sync.up.b32 t|p, %0, 0x2, 0x0, 0xFFFFFFFF;\n\t"
         "@p add.u32 %0, t, %0;\n\t"
-        "   shfl.up.b32 t|p, %0, 0x4, 0x0;\n\t"
+        "   shfl.sync.up.b32 t|p, %0, 0x4, 0x0, 0xFFFFFFFF;\n\t"
         "@p add.u32 %0, t, %0;\n\t"
-        "   shfl.up.b32 t|p, %0, 0x8, 0x0;\n\t"
+        "   shfl.sync.up.b32 t|p, %0, 0x8, 0x0, 0xFFFFFFFF;\n\t"
         "@p add.u32 %0, t, %0;\n\t"
-        "   shfl.up.b32 t|p, %0, 0x10, 0x0;\n\t"
+        "   shfl.sync.up.b32 t|p, %0, 0x10, 0x0, 0xFFFFFFFF;\n\t"
         "@p add.u32 %0, t, %0;\n\t"
         "}"
         : "+r"( value ) );
@@ -787,15 +785,15 @@ __inline__ __device__ float __warp_prefix_incl( float value )
         "{\n\t"
         ".reg .pred p;\n\t"
         ".reg .f32  t;\n\t"
-        "   shfl.up.b32 t|p, %0, 0x1, 0x0;\n\t"
+        "   shfl.sync.up.b32 t|p, %0, 0x1, 0x0, 0xFFFFFFFF;\n\t"
         "@p add.f32 %0, t, %0;\n\t"
-        "   shfl.up.b32 t|p, %0, 0x2, 0x0;\n\t"
+        "   shfl.sync.up.b32 t|p, %0, 0x2, 0x0, 0xFFFFFFFF;\n\t"
         "@p add.f32 %0, t, %0;\n\t"
-        "   shfl.up.b32 t|p, %0, 0x4, 0x0;\n\t"
+        "   shfl.sync.up.b32 t|p, %0, 0x4, 0x0, 0xFFFFFFFF;\n\t"
         "@p add.f32 %0, t, %0;\n\t"
-        "   shfl.up.b32 t|p, %0, 0x8, 0x0;\n\t"
+        "   shfl.sync.up.b32 t|p, %0, 0x8, 0x0, 0xFFFFFFFF;\n\t"
         "@p add.f32 %0, t, %0;\n\t"
-        "   shfl.up.b32 t|p, %0, 0x10, 0x0;\n\t"
+        "   shfl.sync.up.b32 t|p, %0, 0x10, 0x0, 0xFFFFFFFF;\n\t"
         "@p add.f32 %0, t, %0;\n\t"
         "}"
         : "+f"( value ) );
